@@ -448,8 +448,11 @@
         position: relative;
       }
 
+      /* Forces every output pixel onto the red ray (a·L, b·L, c·L), so
+         highlights can't drift into yellow the way a sepia+hue-rotate
+         ramp does. The matrix is defined inline below in <svg>. */
       body.dark-mode .project-image {
-        filter: grayscale(90%) contrast(0.75) invert(1) brightness(0.8);
+        filter: url(#red-duotone) brightness(0.55) contrast(0.8);
       }
 
       .project-image-link:hover {
@@ -538,6 +541,21 @@
     </style>
   </head>
   <body>
+    <!-- SVG FILTER: red-only duotone for dark-mode project images.
+         Each output channel = (per-channel weight) × luminance, so every
+         pixel lands on a single red ray. No yellow possible. -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <filter id="red-duotone" color-interpolation-filters="sRGB">
+        <feColorMatrix
+          type="matrix"
+          values="0.269 0.528 0.103 0 0
+                  0.054 0.106 0.020 0 0
+                  0.036 0.070 0.014 0 0
+                  0     0     0     1 0"
+        />
+      </filter>
+    </svg>
+
     <!-- HEADER -->
     <header id="top">
       <span class="horizontal-line left"></span>
