@@ -164,13 +164,6 @@ async function fetchUserOrgs() {
   ];
   const lists = await Promise.all(urls.map((u) => getJSON(u, [])));
   const orgs = Array.from(new Set(lists.flat().map((o) => o.login)));
-  if (orgs.length === 0) {
-    console.warn(
-      TOKEN
-        ? "no orgs found — token may lack `read:org` AND no public memberships set"
-        : "no public orgs — set GITHUB_TOKEN with read:org for private memberships",
-    );
-  }
   return orgs;
 }
 
