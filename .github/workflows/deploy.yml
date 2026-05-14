@@ -16,7 +16,7 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             set -e
-            cd ~/mi.zur-i
+            cd ~/mi.zur-i.com
             git fetch origin main
             git reset --hard origin/main
             git clean -fd
@@ -25,6 +25,6 @@ jobs:
               --exclude='.git*' \
               --exclude='*.md' \
               --exclude='data/' \
-              ./ /var/www/mi.zur-i/
-            sudo chown -R www-data:www-data /var/www/mi.zur-i
-            sudo chown -R "$USER":"$USER" /var/www/mi.zur-i/data 2>/dev/null || true
+              ./ /var/www/mi.zur-i.com/
+            sudo chown -R www-data:www-data /var/www/mi.zur-i.com
+            sudo chown -R "$USER":"$USER" /var/www/mi.zur-i.com/data 2>/dev/null || true
