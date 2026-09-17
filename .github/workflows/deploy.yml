@@ -29,6 +29,14 @@ jobs:
             --exclude='\.git.*|.*\.md|data/.*|scripts/.*|Dockerfile|\.github/.*' \
             --cache-control="public, max-age=3600"
 
+      - name: Publish extensionless aliases for clean URLs
+        run: |
+          for f in *.html; do
+            [ "$f" = "index.html" ] && continue
+            gcloud storage cp "$f" "gs://${{ secrets.GCS_BUCKET }}/${f%.html}" \
+              --content-type=text/html --cache-control="public, max-age=3600"
+          done
+
       - name: Invalidate CDN cache
         run: |
           gcloud compute url-maps invalidate-cdn-cache "${{ secrets.GCP_URL_MAP }}" --path="/*"
