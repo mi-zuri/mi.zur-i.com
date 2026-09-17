@@ -35,14 +35,22 @@ scripts/        server-side fetch script
 
 ## Deploy
 
-GitHub Actions (`.github/workflows/deploy.yml`) rsyncs to the EC2 host on push to `main`.
+Hosted on GCP: a Cloud Storage bucket behind a global HTTPS Load Balancer with Cloud CDN.
+GitHub Actions (`.github/workflows/deploy.yml`) syncs static files to the bucket and
+invalidates the CDN cache on push to `main`, authenticating via Workload Identity
+Federation (no service-account keys).
 
 ## `/tech` data flow
 
-How are GitHub projects fetched? An hourly cron on the host pre-fetches and saves a static JSON file the browser reads.
+How are GitHub projects fetched? An hourly **Cloud Scheduler** job pre-fetches and saves
+a static JSON file the browser reads.
 
-1. **Cron** runs `scripts/fetch-projects.mjs`: queries GitHub for repos, picks a non-badge hero image from each README, gets language breakdowns, and atomically writes `/var/www/mi.zur-i.com/data/projects.json`.
-2. **nginx** serves it at `/data/projects.json`.
+1. **Cloud Scheduler** triggers a **Cloud Run Job** (built from the root `Dockerfile`)
+   hourly. It runs `scripts/fetch-projects.mjs`: queries GitHub for repos, picks a
+   non-badge hero image from each README, gets language breakdowns, and uploads the
+   snapshot straight to the bucket at `data/projects.json` (`GCS_BUCKET` env var).
+2. **Cloud CDN** serves it at `/data/projects.json` (5-minute cache).
 3. **Browser** does one `fetch("/data/projects.json")` and renders cards.
 
-**Force-refresh** before the next hour: SSH in and run `bun /var/www/mi.zur-i.com/scripts/fetch-projects.mjs` with `/etc/mi.zur-i.com/env` sourced.
+**Force-refresh** before the next hour:
+`gcloud run jobs execute fetch-projects --region=<region>`.

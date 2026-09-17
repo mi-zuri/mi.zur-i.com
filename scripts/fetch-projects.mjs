@@ -1,14 +1,18 @@
 #!/usr/bin/env node
 // Fetch GitHub repos (owned + contributed + org-committed) with preview
-// images and language breakdowns. Writes a JSON snapshot atomically
-// (tmp + rename) so nginx never serves a half-written file. Designed to
-// run hourly via cron.
+// images and language breakdowns. Writes a JSON snapshot — to a GCS bucket
+// when GCS_BUCKET is set (as a Cloud Run Job, on a Cloud Scheduler cron),
+// otherwise atomically to local disk (tmp + rename) for local runs.
 //
 // Env:
 //   GH_USER         (default "mi-zuri") — owner of the repo listing
 //   GH_CONTRIB_USER (default GH_USER) — login used for the contributions
 //                                       query; set when GH_USER is an org
-//   OUT_PATH        (default "/var/www/mi.zur-i.com/data/projects.json")
+//   GCS_BUCKET      when set, upload the snapshot to this bucket instead
+//                   of writing to local disk (Cloud Run Job mode; auth via
+//                   the job's attached service account metadata token)
+//   OUT_PATH        (default "data/projects.json") — local file path, or
+//                   the object name inside GCS_BUCKET
 //   GITHUB_TOKEN    required for contributions (GraphQL refuses anonymous);
 //                   raises rate limit 60 → 5000/hr. For *private* org
 //                   memberships, needs `read:org` (classic PAT) or
@@ -20,7 +24,8 @@ import { dirname } from "node:path";
 
 const GH_USER = process.env.GH_USER || "mi-zuri";
 const GH_CONTRIB_USER = process.env.GH_CONTRIB_USER || GH_USER;
-const OUT_PATH = process.env.OUT_PATH || "/var/www/mi.zur-i.com/data/projects.json";
+const GCS_BUCKET = process.env.GCS_BUCKET;
+const OUT_PATH = process.env.OUT_PATH || "data/projects.json";
 const TOKEN = process.env.GITHUB_TOKEN;
 const README_CONCURRENCY = Number(process.env.README_CONCURRENCY) || 6;
 
@@ -177,6 +182,42 @@ async function userHasCommittedTo(repo) {
   return Array.isArray(data) && data.length > 0;
 }
 
+// Cloud Run attaches a service account; the metadata server hands out a
+// short-lived access token for it — no key file or SDK dependency needed.
+async function getAccessToken() {
+  const res = await fetch(
+    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
+    { headers: { "Metadata-Flavor": "Google" } },
+  );
+  if (!res.ok) throw new Error(`metadata token fetch failed: ${res.status}`);
+  return (await res.json()).access_token;
+}
+
+// A GCS object PUT is atomic (readers see the old or new version, never a
+// partial one), so no tmp+rename dance is needed here like on local disk.
+// max-age=300 keeps Cloud CDN from serving data more than 5min stale.
+async function uploadToGCS(bucket, objectName, body) {
+  const token = await getAccessToken();
+  const boundary = "gcsupload";
+  const metadata = JSON.stringify({ name: objectName, cacheControl: "public, max-age=300" });
+  const multipartBody =
+    `--${boundary}\r\ncontent-type: application/json; charset=UTF-8\r\n\r\n${metadata}\r\n` +
+    `--${boundary}\r\ncontent-type: application/json\r\n\r\n${body}\r\n` +
+    `--${boundary}--`;
+  const res = await fetch(
+    `https://storage.googleapis.com/upload/storage/v1/b/${bucket}/o?uploadType=multipart`,
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": `multipart/related; boundary=${boundary}`,
+      },
+      body: multipartBody,
+    },
+  );
+  if (!res.ok) throw new Error(`GCS upload failed: ${res.status} ${await res.text()}`);
+}
+
 async function main() {
   const [ownedAllRaw, contribFullNamesRaw] = await Promise.all([
     fetch(
@@ -235,13 +276,18 @@ async function main() {
     images,
   };
 
-  await mkdir(dirname(OUT_PATH), { recursive: true });
-  const tmp = `${OUT_PATH}.tmp`;
-  await writeFile(tmp, JSON.stringify(payload), "utf8");
-  await rename(tmp, OUT_PATH);
+  const body = JSON.stringify(payload);
+  if (GCS_BUCKET) {
+    await uploadToGCS(GCS_BUCKET, OUT_PATH, body);
+  } else {
+    await mkdir(dirname(OUT_PATH), { recursive: true });
+    const tmp = `${OUT_PATH}.tmp`;
+    await writeFile(tmp, body, "utf8");
+    await rename(tmp, OUT_PATH);
+  }
 
   console.log(
-    `[${new Date().toISOString()}] wrote ${repos.length} repos (${ownRepos.length} owned + ${contribRepos.length} contributed + ${orgRepos.length} org-committed, ${images.filter(Boolean).length} with images) to ${OUT_PATH}`,
+    `[${new Date().toISOString()}] wrote ${repos.length} repos (${ownRepos.length} owned + ${contribRepos.length} contributed + ${orgRepos.length} org-committed, ${images.filter(Boolean).length} with images) to ${GCS_BUCKET ? `gs://${GCS_BUCKET}/${OUT_PATH}` : OUT_PATH}`,
   );
 }
 

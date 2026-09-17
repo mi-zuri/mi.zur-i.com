@@ -4,27 +4,31 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Deploy over SSH
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          script: |
-            set -e
-            cd ~/mi.zur-i.com
-            git fetch origin main
-            git reset --hard origin/main
-            git clean -fd
+      - uses: actions/checkout@v4
 
-            sudo rsync -a --delete \
-              --exclude='.git*' \
-              --exclude='*.md' \
-              --exclude='data/' \
-              ./ /var/www/mi.zur-i.com/
-            sudo chown -R www-data:www-data /var/www/mi.zur-i.com
-            sudo chown -R "$USER":"$USER" /var/www/mi.zur-i.com/data 2>/dev/null || true
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Sync static files to bucket
+        run: |
+          gcloud storage rsync . "gs://${{ secrets.GCS_BUCKET }}" \
+            --recursive --delete-unmatched-destination-objects \
+            --exclude='\.git.*|.*\.md|data/.*|scripts/.*|Dockerfile|\.github/.*' \
+            --cache-control="public, max-age=3600"
+
+      - name: Invalidate CDN cache
+        run: |
+          gcloud compute url-maps invalidate-cdn-cache "${{ secrets.GCP_URL_MAP }}" --path="/*"
