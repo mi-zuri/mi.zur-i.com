@@ -22,6 +22,21 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            job:
+              - 'scripts/fetch-projects.mjs'
+              - 'Dockerfile'
+
+      - name: Rebuild & redeploy fetch-projects Cloud Run Job
+        if: steps.filter.outputs.job == 'true'
+        run: |
+          gcloud run jobs deploy fetch-projects --source=. --region=europe-central2 \
+            --set-env-vars=GCS_BUCKET=${{ secrets.GCS_BUCKET }},GH_USER=mi-zuri \
+            --set-secrets=GITHUB_TOKEN=github-token:latest
+
       - name: Sync static files to bucket
         run: |
           gcloud storage rsync . "gs://${{ secrets.GCS_BUCKET }}" \
